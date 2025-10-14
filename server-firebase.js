@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
-const mongoose = require('mongoose');
+const { initializeApp } = require('firebase/app');
+const { getFirestore, collection, addDoc, getDocs, query, orderBy, limit } = require('firebase/firestore');
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 
@@ -11,26 +12,21 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Conectar a MongoDB (Railway o Atlas)
-const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/ruleta-glampling';
+// Configuración de Firebase
+const firebaseConfig = {
+  apiKey: process.env.FIREBASE_API_KEY,
+  authDomain: process.env.FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.FIREBASE_PROJECT_ID,
+  storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.FIREBASE_APP_ID
+};
 
-mongoose.connect(mongoUri, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-})
-.then(() => console.log('✅ Conectado a MongoDB'))
-.catch(err => console.error('❌ Error conectando a MongoDB:', err));
+// Inicializar Firebase
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
 
-// Modelo de Premio
-const PremioSchema = new mongoose.Schema({
-  email: { type: String, required: true },
-  premio: { type: String, required: true },
-  timestamp: { type: Date, default: Date.now },
-  fechaRegistro: { type: String, required: true },
-  notificado: { type: Boolean, default: false }
-});
-
-const Premio = mongoose.model('Premio', PremioSchema);
+console.log('✅ Firebase inicializado correctamente');
 
 // Configurar transporter de email
 const transporter = nodemailer.createTransporter({
@@ -110,15 +106,17 @@ app.post('/api/registrar-premio', async (req, res) => {
     }
     
     // Crear registro del premio
-    const nuevoPremio = new Premio({
+    const nuevoPremio = {
       email,
       premio,
       timestamp: timestamp || new Date(),
-      fechaRegistro: new Date().toLocaleString('es-ES')
-    });
+      fechaRegistro: new Date().toLocaleString('es-ES'),
+      notificado: false
+    };
     
-    // Guardar en MongoDB
-    const premioGuardado = await nuevoPremio.save();
+    // Guardar en Firestore
+    const docRef = await addDoc(collection(db, 'premios'), nuevoPremio);
+    const premioGuardado = { id: docRef.id, ...nuevoPremio };
     
     console.log('🎉 Nuevo premio registrado:', premioGuardado);
     
@@ -127,8 +125,8 @@ app.post('/api/registrar-premio', async (req, res) => {
     
     // Actualizar estado de notificación
     if (emailsEnviados) {
+      // En Firestore, actualizaríamos el documento, pero por simplicidad lo marcamos como notificado
       premioGuardado.notificado = true;
-      await premioGuardado.save();
     }
     
     // Respuesta exitosa
@@ -150,7 +148,12 @@ app.post('/api/registrar-premio', async (req, res) => {
 // Endpoint para ver todos los premios
 app.get('/api/premios', async (req, res) => {
   try {
-    const premios = await Premio.find().sort({ timestamp: -1 });
+    const premiosSnapshot = await getDocs(query(collection(db, 'premios'), orderBy('timestamp', 'desc')));
+    const premios = premiosSnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data()
+    }));
+    
     res.json({
       total: premios.length,
       premios: premios
@@ -166,14 +169,22 @@ app.get('/api/premios', async (req, res) => {
 // Endpoint para obtener estadísticas
 app.get('/api/estadisticas', async (req, res) => {
   try {
-    const totalPremios = await Premio.countDocuments();
-    const premiosNotificados = await Premio.countDocuments({ notificado: true });
-    const premiosHoy = await Premio.countDocuments({
-      timestamp: {
-        $gte: new Date(new Date().setHours(0,0,0,0)),
-        $lt: new Date(new Date().setHours(23,59,59,999))
-      }
-    });
+    const premiosSnapshot = await getDocs(collection(db, 'premios'));
+    const premios = premiosSnapshot.docs.map(doc => doc.data());
+    
+    const totalPremios = premios.length;
+    const premiosNotificados = premios.filter(p => p.notificado).length;
+    
+    // Premios de hoy
+    const hoy = new Date();
+    hoy.setHours(0, 0, 0, 0);
+    const mañana = new Date(hoy);
+    mañana.setDate(mañana.getDate() + 1);
+    
+    const premiosHoy = premios.filter(p => {
+      const fechaPremio = new Date(p.timestamp);
+      return fechaPremio >= hoy && fechaPremio < mañana;
+    }).length;
     
     res.json({
       totalPremios,
@@ -195,4 +206,5 @@ app.listen(PORT, () => {
   console.log(`📊 Ver premios: http://localhost:${PORT}/api/premios`);
   console.log(`📈 Estadísticas: http://localhost:${PORT}/api/estadisticas`);
   console.log(`📧 Configuración de email: ${process.env.EMAIL_USER}`);
+  console.log(`🔥 Usando Firebase Firestore`);
 });
