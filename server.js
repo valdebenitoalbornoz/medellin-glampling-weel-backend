@@ -33,7 +33,7 @@ const PremioSchema = new mongoose.Schema({
 const Premio = mongoose.model('Premio', PremioSchema);
 
 // Configurar transporter de email
-const transporter = nodemailer.createTransporter({
+const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: process.env.EMAIL_PORT,
   secure: false,
