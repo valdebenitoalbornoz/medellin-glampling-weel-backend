@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const nodemailer = require('nodemailer');
+const EmailService = require('./email-service');
 require('dotenv').config();
 
 const app = express();
@@ -32,139 +32,16 @@ const PremioSchema = new mongoose.Schema({
 
 const Premio = mongoose.model('Premio', PremioSchema);
 
-// Configurar transporter de email
-const transporter = nodemailer.createTransport({
-  host: process.env.EMAIL_HOST,
-  port: process.env.EMAIL_PORT,
-  secure: false, // true para 465, false para otros puertos
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  },
-  tls: {
-    rejectUnauthorized: false,
-    ciphers: 'SSLv3'
-  },
-  connectionTimeout: 30000, // 30 segundos (reducido)
-  greetingTimeout: 15000,   // 15 segundos (reducido)
-  socketTimeout: 30000,     // 30 segundos (reducido)
-  debug: true,              // Habilitar debug
-  logger: true              // Habilitar logs
-});
+// Inicializar servicio de email mejorado
+const emailService = new EmailService();
 
-// Configuración alternativa para Gmail (si la principal falla)
-const transporterAlternativo = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  },
-  tls: {
-    rejectUnauthorized: false
-  },
-  connectionTimeout: 30000,
-  greetingTimeout: 15000,
-  socketTimeout: 30000,
-  debug: true,
-  logger: true
-});
-
-// Función para probar conexión SMTP
-async function probarConexionSMTP() {
-  try {
-    console.log('🔍 Probando conexión SMTP principal...');
-    await transporter.verify();
-    console.log('✅ Conexión SMTP principal exitosa');
-    return transporter;
-  } catch (error) {
-    console.log('❌ Conexión SMTP principal falló:', error.message);
-    
-    try {
-      console.log('🔍 Probando conexión SMTP alternativa...');
-      await transporterAlternativo.verify();
-      console.log('✅ Conexión SMTP alternativa exitosa');
-      return transporterAlternativo;
-    } catch (error2) {
-      console.log('❌ Conexión SMTP alternativa también falló:', error2.message);
-      throw new Error('Ambas configuraciones SMTP fallaron');
-    }
-  }
-}
-
-// Función para enviar emails
+// Función para enviar emails usando el servicio mejorado
 async function enviarNotificaciones(premio) {
   try {
-    console.log('📧 Intentando enviar emails...');
-    console.log('📧 Configuración SMTP:', {
-      host: process.env.EMAIL_HOST,
-      port: process.env.EMAIL_PORT,
-      user: process.env.EMAIL_USER,
-      admin: process.env.ADMIN_EMAIL
-    });
-
-    // Verificar configuración
-    if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      throw new Error('Configuración de email incompleta');
-    }
-
-    // Probar conexión SMTP
-    const transporterActivo = await probarConexionSMTP();
-
-    // Email al usuario
-    const emailUsuario = {
-      from: `"Glampling" <${process.env.EMAIL_USER}>`,
-      to: premio.email,
-      subject: '🎉 ¡Felicidades! Has ganado un premio en Glampling',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #ff6b6b;">¡Felicidades!</h2>
-          <p>Has ganado el siguiente premio en nuestra ruleta:</p>
-          <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-            <h3 style="color: #333; margin: 0;">${premio.premio}</h3>
-          </div>
-          <p>Fecha: ${premio.fechaRegistro}</p>
-          <p>¡Gracias por participar en Glampling!</p>
-          <hr style="margin: 30px 0;">
-          <p style="color: #666; font-size: 12px;">Este es un email automático del sistema de premios de Glampling.</p>
-        </div>
-      `
-    };
-
-    // Email a administración
-    const emailAdmin = {
-      from: `"Glampling" <${process.env.EMAIL_USER}>`,
-      to: process.env.ADMIN_EMAIL,
-      subject: '📊 Nuevo premio otorgado - Glampling',
-      html: `
-        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #333;">Nuevo premio otorgado</h2>
-          <p>Se ha registrado un nuevo premio en el sistema:</p>
-          <div style="background: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0;">
-            <p><strong>Usuario:</strong> ${premio.email}</p>
-            <p><strong>Premio:</strong> ${premio.premio}</p>
-            <p><strong>Fecha:</strong> ${premio.fechaRegistro}</p>
-          </div>
-          <p>Este premio ha sido notificado al usuario automáticamente.</p>
-        </div>
-      `
-    };
-
-    // Enviar emails usando el transporter activo
-    const resultadoUsuario = await transporterActivo.sendMail(emailUsuario);
-    console.log('✅ Email al usuario enviado:', resultadoUsuario.messageId);
-    
-    const resultadoAdmin = await transporterActivo.sendMail(emailAdmin);
-    console.log('✅ Email a administración enviado:', resultadoAdmin.messageId);
-    
-    console.log('📧 Emails enviados exitosamente');
-    return true;
+    console.log('📧 Enviando notificaciones con servicio mejorado...');
+    return await emailService.enviarNotificaciones(premio);
   } catch (error) {
     console.error('❌ Error enviando emails:', error);
-    console.error('❌ Detalles del error:', {
-      code: error.code,
-      command: error.command,
-      response: error.response
-    });
     return false;
   }
 }
@@ -306,12 +183,7 @@ app.post('/api/test-email', async (req, res) => {
       });
     }
     
-    // Verificar conexión SMTP
-    console.log('🔍 Verificando conexión SMTP...');
-    await transporter.verify();
-    console.log('✅ Conexión SMTP exitosa');
-    
-    // Enviar email de prueba
+    // Enviar email de prueba usando el servicio mejorado
     const emailPrueba = {
       from: `"Glampling Test" <${process.env.EMAIL_USER}>`,
       to: process.env.ADMIN_EMAIL,
@@ -326,7 +198,7 @@ app.post('/api/test-email', async (req, res) => {
       `
     };
     
-    const resultado = await transporter.sendMail(emailPrueba);
+    const resultado = await emailService.enviarEmail(emailPrueba);
     console.log('✅ Email de prueba enviado:', resultado.messageId);
     
     res.json({
@@ -399,66 +271,48 @@ app.post('/api/diagnosticar-gmail', async (req, res) => {
       });
     }
     
-    // Probar conexión SMTP principal
-    let resultadoPrincipal = null;
+    // Probar servicio de email mejorado
+    let resultadoEmail = null;
     try {
-      console.log('🔍 Probando configuración SMTP principal...');
-      await transporter.verify();
-      resultadoPrincipal = { exito: true, mensaje: 'Conexión SMTP principal exitosa' };
-      console.log('✅ Configuración SMTP principal funciona');
-    } catch (error) {
-      resultadoPrincipal = { 
-        exito: false, 
-        mensaje: 'Conexión SMTP principal falló',
-        error: error.message,
-        codigo: error.code
+      console.log('🔍 Probando servicio de email mejorado...');
+      const emailPrueba = {
+        from: `"Test" <${process.env.EMAIL_USER}>`,
+        to: process.env.ADMIN_EMAIL,
+        subject: 'Test',
+        text: 'Test'
       };
-      console.log('❌ Configuración SMTP principal falló:', error.message);
+      
+      const resultado = await emailService.enviarEmail(emailPrueba);
+      resultadoEmail = { 
+        exito: true, 
+        mensaje: 'Servicio de email funcionando',
+        transporter: resultado.transporter
+      };
+      console.log('✅ Servicio de email funciona');
+    } catch (error) {
+      resultadoEmail = { 
+        exito: false, 
+        mensaje: 'Servicio de email falló',
+        error: error.message
+      };
+      console.log('❌ Servicio de email falló:', error.message);
     }
     
-    // Probar conexión SMTP alternativa
-    let resultadoAlternativo = null;
-    try {
-      console.log('🔍 Probando configuración SMTP alternativa...');
-      await transporterAlternativo.verify();
-      resultadoAlternativo = { exito: true, mensaje: 'Conexión SMTP alternativa exitosa' };
-      console.log('✅ Configuración SMTP alternativa funciona');
-    } catch (error) {
-      resultadoAlternativo = { 
-        exito: false, 
-        mensaje: 'Conexión SMTP alternativa falló',
-        error: error.message,
-        codigo: error.code
-      };
-      console.log('❌ Configuración SMTP alternativa falló:', error.message);
-    }
-    
-    // Determinar qué configuración usar
-    let configuracionRecomendada = null;
-    if (resultadoPrincipal.exito) {
-      configuracionRecomendada = 'principal';
-    } else if (resultadoAlternativo.exito) {
-      configuracionRecomendada = 'alternativa';
-    } else {
-      configuracionRecomendada = 'ninguna';
-    }
+    // Determinar resultado
+    const exito = resultadoEmail.exito;
     
     res.json({
-      success: configuracionRecomendada !== 'ninguna',
-      configuracionRecomendada,
+      success: exito,
       variables,
-      pruebas: {
-        principal: resultadoPrincipal,
-        alternativa: resultadoAlternativo
-      },
-      recomendaciones: configuracionRecomendada === 'ninguna' ? [
+      prueba: resultadoEmail,
+      recomendaciones: exito ? [
+        '✅ El servicio de email está funcionando correctamente',
+        'Los emails se enviarán automáticamente'
+      ] : [
         '1. Verifica que la contraseña de aplicación de Gmail sea correcta',
         '2. Asegúrate de que la verificación en 2 pasos esté activada',
         '3. Genera una nueva contraseña de aplicación',
-        '4. Verifica que no haya restricciones de red en Railway'
-      ] : [
-        `Usar configuración ${configuracionRecomendada}`,
-        'El sistema funcionará correctamente'
+        '4. Railway puede estar bloqueando conexiones SMTP - considera usar SendGrid'
       ]
     });
     
