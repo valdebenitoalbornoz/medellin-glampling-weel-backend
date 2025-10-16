@@ -36,19 +36,38 @@ const Premio = mongoose.model('Premio', PremioSchema);
 const transporter = nodemailer.createTransport({
   host: process.env.EMAIL_HOST,
   port: process.env.EMAIL_PORT,
-  secure: false,
+  secure: false, // true para 465, false para otros puertos
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS
-  }
+  },
+  tls: {
+    rejectUnauthorized: false
+  },
+  connectionTimeout: 60000, // 60 segundos
+  greetingTimeout: 30000,   // 30 segundos
+  socketTimeout: 60000     // 60 segundos
 });
 
 // Función para enviar emails
 async function enviarNotificaciones(premio) {
   try {
+    console.log('📧 Intentando enviar emails...');
+    console.log('📧 Configuración SMTP:', {
+      host: process.env.EMAIL_HOST,
+      port: process.env.EMAIL_PORT,
+      user: process.env.EMAIL_USER,
+      admin: process.env.ADMIN_EMAIL
+    });
+
+    // Verificar configuración
+    if (!process.env.EMAIL_HOST || !process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      throw new Error('Configuración de email incompleta');
+    }
+
     // Email al usuario
     const emailUsuario = {
-      from: process.env.EMAIL_USER,
+      from: `"Glampling" <${process.env.EMAIL_USER}>`,
       to: premio.email,
       subject: '🎉 ¡Felicidades! Has ganado un premio en Glampling',
       html: `
@@ -68,7 +87,7 @@ async function enviarNotificaciones(premio) {
 
     // Email a administración
     const emailAdmin = {
-      from: process.env.EMAIL_USER,
+      from: `"Glampling" <${process.env.EMAIL_USER}>`,
       to: process.env.ADMIN_EMAIL,
       subject: '📊 Nuevo premio otorgado - Glampling',
       html: `
@@ -85,15 +104,49 @@ async function enviarNotificaciones(premio) {
       `
     };
 
+    // Verificar conexión SMTP
+    await transporter.verify();
+    console.log('✅ Conexión SMTP verificada');
+
     // Enviar emails
-    await transporter.sendMail(emailUsuario);
-    await transporter.sendMail(emailAdmin);
+    const resultadoUsuario = await transporter.sendMail(emailUsuario);
+    console.log('✅ Email al usuario enviado:', resultadoUsuario.messageId);
+    
+    const resultadoAdmin = await transporter.sendMail(emailAdmin);
+    console.log('✅ Email a administración enviado:', resultadoAdmin.messageId);
     
     console.log('📧 Emails enviados exitosamente');
     return true;
   } catch (error) {
     console.error('❌ Error enviando emails:', error);
+    console.error('❌ Detalles del error:', {
+      code: error.code,
+      command: error.command,
+      response: error.response
+    });
     return false;
+  }
+}
+
+// Función para enviar emails en segundo plano (no bloquea la respuesta)
+async function enviarNotificacionesEnSegundoPlano(premio) {
+  try {
+    console.log('📧 Enviando emails en segundo plano...');
+    
+    // Enviar notificaciones por email
+    const emailsEnviados = await enviarNotificaciones(premio);
+    
+    // Actualizar estado de notificación en la base de datos
+    if (emailsEnviados) {
+      await Premio.findByIdAndUpdate(premio._id, { notificado: true });
+      console.log('✅ Emails enviados y estado actualizado');
+    } else {
+      console.log('⚠️ Emails no enviados, se reintentará más tarde');
+    }
+    
+  } catch (error) {
+    console.error('❌ Error enviando emails en segundo plano:', error);
+    // Aquí podrías implementar un sistema de reintentos o cola de emails
   }
 }
 
@@ -122,22 +175,16 @@ app.post('/api/registrar-premio', async (req, res) => {
     
     console.log('🎉 Nuevo premio registrado:', premioGuardado);
     
-    // Enviar notificaciones por email
-    const emailsEnviados = await enviarNotificaciones(premioGuardado);
-    
-    // Actualizar estado de notificación
-    if (emailsEnviados) {
-      premioGuardado.notificado = true;
-      await premioGuardado.save();
-    }
-    
-    // Respuesta exitosa
+    // Responder inmediatamente al usuario
     res.status(200).json({
       success: true,
       message: 'Premio registrado exitosamente',
       premio: premioGuardado,
-      notificado: emailsEnviados
+      notificacion: 'Los emails se están enviando en segundo plano'
     });
+    
+    // Enviar notificaciones por email en segundo plano (no bloquea la respuesta)
+    enviarNotificacionesEnSegundoPlano(premioGuardado);
     
   } catch (error) {
     console.error('Error al registrar premio:', error);
@@ -189,10 +236,146 @@ app.get('/api/estadisticas', async (req, res) => {
   }
 });
 
+// Endpoint para probar configuración de email
+app.post('/api/test-email', async (req, res) => {
+  try {
+    console.log('🧪 Probando configuración de email...');
+    
+    // Verificar configuración
+    const config = {
+      host: process.env.EMAIL_HOST,
+      port: process.env.EMAIL_PORT,
+      user: process.env.EMAIL_USER,
+      admin: process.env.ADMIN_EMAIL
+    };
+    
+    console.log('📧 Configuración actual:', config);
+    
+    // Verificar conexión SMTP
+    await transporter.verify();
+    console.log('✅ Conexión SMTP exitosa');
+    
+    // Enviar email de prueba
+    const emailPrueba = {
+      from: `"Glampling Test" <${process.env.EMAIL_USER}>`,
+      to: process.env.ADMIN_EMAIL,
+      subject: '🧪 Email de prueba - Glampling',
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Email de prueba</h2>
+          <p>Este es un email de prueba del sistema de premios de Glampling.</p>
+          <p>Fecha: ${new Date().toLocaleString('es-ES')}</p>
+          <p>Si recibes este email, la configuración está funcionando correctamente.</p>
+        </div>
+      `
+    };
+    
+    const resultado = await transporter.sendMail(emailPrueba);
+    console.log('✅ Email de prueba enviado:', resultado.messageId);
+    
+    res.json({
+      success: true,
+      message: 'Email de prueba enviado exitosamente',
+      messageId: resultado.messageId,
+      config: {
+        host: process.env.EMAIL_HOST,
+        port: process.env.EMAIL_PORT,
+        user: process.env.EMAIL_USER
+      }
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en prueba de email:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error enviando email de prueba',
+      details: {
+        code: error.code,
+        command: error.command,
+        response: error.response
+      }
+    });
+  }
+});
+
+// Endpoint para reintentar emails no enviados
+app.post('/api/reintentar-emails', async (req, res) => {
+  try {
+    console.log('🔄 Reintentando envío de emails no notificados...');
+    
+    // Buscar premios no notificados
+    const premiosNoNotificados = await Premio.find({ notificado: false });
+    
+    if (premiosNoNotificados.length === 0) {
+      return res.json({
+        success: true,
+        message: 'No hay premios pendientes de notificación',
+        total: 0
+      });
+    }
+    
+    console.log(`📧 Reintentando ${premiosNoNotificados.length} premios...`);
+    
+    let exitosos = 0;
+    let fallidos = 0;
+    
+    // Reintentar cada premio
+    for (const premio of premiosNoNotificados) {
+      try {
+        const emailsEnviados = await enviarNotificaciones(premio);
+        if (emailsEnviados) {
+          await Premio.findByIdAndUpdate(premio._id, { notificado: true });
+          exitosos++;
+          console.log(`✅ Email enviado para premio ${premio._id}`);
+        } else {
+          fallidos++;
+          console.log(`❌ Error enviando email para premio ${premio._id}`);
+        }
+      } catch (error) {
+        fallidos++;
+        console.error(`❌ Error procesando premio ${premio._id}:`, error);
+      }
+    }
+    
+    res.json({
+      success: true,
+      message: 'Reintento de emails completado',
+      total: premiosNoNotificados.length,
+      exitosos,
+      fallidos
+    });
+    
+  } catch (error) {
+    console.error('❌ Error en reintento de emails:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Error reintentando emails'
+    });
+  }
+});
+
+// Endpoint de estado del sistema
+app.get('/api/status', (req, res) => {
+  res.json({
+    status: 'running',
+    database: 'MongoDB',
+    email: {
+      host: process.env.EMAIL_HOST,
+      port: process.env.EMAIL_PORT,
+      user: process.env.EMAIL_USER,
+      admin: process.env.ADMIN_EMAIL
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Iniciar servidor
 app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   console.log(`📊 Ver premios: http://localhost:${PORT}/api/premios`);
   console.log(`📈 Estadísticas: http://localhost:${PORT}/api/estadisticas`);
+  console.log(`🧪 Probar email: POST http://localhost:${PORT}/api/test-email`);
+  console.log(`🔄 Reintentar emails: POST http://localhost:${PORT}/api/reintentar-emails`);
   console.log(`📧 Configuración de email: ${process.env.EMAIL_USER}`);
+  console.log(`⚡ Los emails se envían en segundo plano (no bloquean la respuesta)`);
 });
