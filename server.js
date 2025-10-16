@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
-const EmailService = require('./email-service');
+const HybridEmailService = require('./hybrid-email-service');
 require('dotenv').config();
 
 const app = express();
@@ -32,8 +32,8 @@ const PremioSchema = new mongoose.Schema({
 
 const Premio = mongoose.model('Premio', PremioSchema);
 
-// Inicializar servicio de email mejorado
-const emailService = new EmailService();
+// Inicializar servicio de email híbrido (Gmail + SendGrid)
+const emailService = new HybridEmailService();
 
 // Función para enviar emails usando el servicio mejorado
 async function enviarNotificaciones(premio) {
@@ -241,10 +241,10 @@ app.post('/api/test-email', async (req, res) => {
   }
 });
 
-// Endpoint para diagnosticar problemas de Gmail
-app.post('/api/diagnosticar-gmail', async (req, res) => {
+// Endpoint para diagnosticar servicios de email
+app.post('/api/diagnosticar-email', async (req, res) => {
   try {
-    console.log('🔍 Iniciando diagnóstico completo de Gmail...');
+    console.log('🔍 Iniciando diagnóstico completo de servicios de email...');
     
     // Verificar variables de entorno
     const variables = {
@@ -252,67 +252,43 @@ app.post('/api/diagnosticar-gmail', async (req, res) => {
       EMAIL_PORT: process.env.EMAIL_PORT,
       EMAIL_USER: process.env.EMAIL_USER,
       EMAIL_PASS: process.env.EMAIL_PASS ? '***configurada***' : '❌ NO CONFIGURADA',
-      ADMIN_EMAIL: process.env.ADMIN_EMAIL
+      ADMIN_EMAIL: process.env.ADMIN_EMAIL,
+      SENDGRID_API_KEY: process.env.SENDGRID_API_KEY ? '***configurada***' : '❌ NO CONFIGURADA',
+      EMAIL_FROM: process.env.EMAIL_FROM
     };
     
     console.log('📧 Variables de entorno:', variables);
     
-    // Verificar que todas las variables estén configuradas
-    const variablesFaltantes = Object.entries(variables)
-      .filter(([key, value]) => !value || value.includes('NO CONFIGURADA'))
-      .map(([key]) => key);
+    // Diagnosticar ambos servicios
+    const diagnosticos = await emailService.diagnosticar();
     
-    if (variablesFaltantes.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Variables de entorno faltantes',
-        faltantes: variablesFaltantes,
-        solucion: 'Configura todas las variables en Railway'
-      });
-    }
-    
-    // Probar servicio de email mejorado
-    let resultadoEmail = null;
-    try {
-      console.log('🔍 Probando servicio de email mejorado...');
-      const emailPrueba = {
-        from: `"Test" <${process.env.EMAIL_USER}>`,
-        to: process.env.ADMIN_EMAIL,
-        subject: 'Test',
-        text: 'Test'
-      };
-      
-      const resultado = await emailService.enviarEmail(emailPrueba);
-      resultadoEmail = { 
-        exito: true, 
-        mensaje: 'Servicio de email funcionando',
-        transporter: resultado.transporter
-      };
-      console.log('✅ Servicio de email funciona');
-    } catch (error) {
-      resultadoEmail = { 
-        exito: false, 
-        mensaje: 'Servicio de email falló',
-        error: error.message
-      };
-      console.log('❌ Servicio de email falló:', error.message);
-    }
-    
-    // Determinar resultado
-    const exito = resultadoEmail.exito;
+    const gmailFunciona = diagnosticos.gmail.funciona;
+    const sendgridFunciona = diagnosticos.sendgrid.funciona;
+    const algunoFunciona = gmailFunciona || sendgridFunciona;
     
     res.json({
-      success: exito,
+      success: algunoFunciona,
       variables,
-      prueba: resultadoEmail,
-      recomendaciones: exito ? [
-        '✅ El servicio de email está funcionando correctamente',
+      diagnosticos: {
+        gmail: {
+          funciona: gmailFunciona,
+          error: diagnosticos.gmail.error
+        },
+        sendgrid: {
+          funciona: sendgridFunciona,
+          error: diagnosticos.sendgrid.error
+        }
+      },
+      recomendaciones: algunoFunciona ? [
+        '✅ Al menos un servicio de email está funcionando',
+        gmailFunciona ? 'Gmail está funcionando' : 'Gmail no funciona',
+        sendgridFunciona ? 'SendGrid está funcionando' : 'SendGrid no funciona',
         'Los emails se enviarán automáticamente'
       ] : [
-        '1. Verifica que la contraseña de aplicación de Gmail sea correcta',
-        '2. Asegúrate de que la verificación en 2 pasos esté activada',
-        '3. Genera una nueva contraseña de aplicación',
-        '4. Railway puede estar bloqueando conexiones SMTP - considera usar SendGrid'
+        '❌ Ningún servicio de email funciona',
+        '1. Para Gmail: Verifica la contraseña de aplicación',
+        '2. Para SendGrid: Configura SENDGRID_API_KEY en Railway',
+        '3. Railway puede estar bloqueando conexiones SMTP'
       ]
     });
     
@@ -403,7 +379,7 @@ app.listen(PORT, () => {
   console.log(`📊 Ver premios: http://localhost:${PORT}/api/premios`);
   console.log(`📈 Estadísticas: http://localhost:${PORT}/api/estadisticas`);
   console.log(`🧪 Probar email: POST http://localhost:${PORT}/api/test-email`);
-  console.log(`🔍 Diagnosticar Gmail: POST http://localhost:${PORT}/api/diagnosticar-gmail`);
+  console.log(`🔍 Diagnosticar Email: POST http://localhost:${PORT}/api/diagnosticar-email`);
   console.log(`🔄 Reintentar emails: POST http://localhost:${PORT}/api/reintentar-emails`);
   console.log(`📧 Configuración de email: ${process.env.EMAIL_USER}`);
   console.log(`⚡ Los emails se envían en segundo plano (no bloquean la respuesta)`);
