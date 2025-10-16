@@ -11,7 +11,7 @@ class EmailService {
     // Configuración 1: Gmail con configuración especial para Railway
     this.transporters.push({
       name: 'Gmail Railway',
-      transporter: nodemailer.createTransporter({
+      transporter: nodemailer.createTransport({
         host: 'smtp.gmail.com',
         port: 465, // Puerto SSL
         secure: true,
@@ -31,7 +31,7 @@ class EmailService {
     // Configuración 2: Gmail con puerto 587
     this.transporters.push({
       name: 'Gmail 587',
-      transporter: nodemailer.createTransporter({
+      transporter: nodemailer.createTransport({
         host: 'smtp.gmail.com',
         port: 587,
         secure: false,
@@ -52,7 +52,7 @@ class EmailService {
     // Configuración 3: Gmail con service
     this.transporters.push({
       name: 'Gmail Service',
-      transporter: nodemailer.createTransporter({
+      transporter: nodemailer.createTransport({
         service: 'gmail',
         auth: {
           user: process.env.EMAIL_USER,
