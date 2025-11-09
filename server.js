@@ -30,10 +30,48 @@ const PremioSchema = new mongoose.Schema({
   notificado: { type: Boolean, default: false }
 });
 
+// Índice compuesto para optimizar búsquedas por email y timestamp
+PremioSchema.index({ email: 1, timestamp: -1 });
+
 const Premio = mongoose.model('Premio', PremioSchema);
+
+// Configuración de tiempo de espera entre participaciones (en días)
+const DIAS_ESPERA_PARTICIPACION = 7;
 
 // Inicializar servicio de email híbrido (Gmail + SendGrid)
 const emailService = new HybridEmailService();
+
+// Función para validar si un email puede participar
+async function validarEmailPuedeParticipar(email) {
+  const emailNormalizado = email.toLowerCase().trim();
+  const fechaLimite = new Date();
+  fechaLimite.setDate(fechaLimite.getDate() - DIAS_ESPERA_PARTICIPACION);
+  
+  const participacionReciente = await Premio.findOne({
+    email: emailNormalizado,
+    timestamp: { $gte: fechaLimite }
+  });
+  
+  if (participacionReciente) {
+    const diasTranscurridos = Math.floor(
+      (new Date() - participacionReciente.timestamp) / (1000 * 60 * 60 * 24)
+    );
+    const diasRestantes = DIAS_ESPERA_PARTICIPACION - diasTranscurridos;
+    
+    return {
+      puedeParticipar: false,
+      ultimaParticipacion: participacionReciente.timestamp,
+      diasTranscurridos: diasTranscurridos,
+      diasRestantes: diasRestantes,
+      mensaje: `Debes esperar ${diasRestantes} día(s) más antes de poder participar nuevamente`
+    };
+  }
+  
+  return {
+    puedeParticipar: true,
+    mensaje: 'El email puede participar'
+  };
+}
 
 // Función para enviar emails usando el servicio mejorado
 async function enviarNotificaciones(premio) {
@@ -80,12 +118,26 @@ app.post('/api/registrar-premio', async (req, res) => {
       });
     }
     
+    // Validar que el email pueda participar
+    const validacion = await validarEmailPuedeParticipar(email);
+    
+    if (!validacion.puedeParticipar) {
+      return res.status(403).json({
+        success: false,
+        error: 'Este correo electrónico ya participó recientemente',
+        message: validacion.mensaje,
+        ultimaParticipacion: validacion.ultimaParticipacion,
+        diasTranscurridos: validacion.diasTranscurridos,
+        diasRestantes: validacion.diasRestantes
+      });
+    }
+    
     // Crear registro del premio
     const nuevoPremio = new Premio({
-      email,
+      email: email.toLowerCase().trim(),
       premio,
       timestamp: timestamp || new Date(),
-      fechaRegistro: new Date().toLocaleString('es-ES')
+      fechaRegistro: new Date().toLocaleString('es-CO')
     });
     
     // Guardar en MongoDB
@@ -107,6 +159,37 @@ app.post('/api/registrar-premio', async (req, res) => {
   } catch (error) {
     console.error('Error al registrar premio:', error);
     res.status(500).json({ 
+      error: 'Error interno del servidor' 
+    });
+  }
+});
+
+// Endpoint para validar si un email puede participar
+app.post('/api/validar-email', async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    // Validar que se proporcione el email
+    if (!email) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'El email es requerido' 
+      });
+    }
+    
+    // Validar si el email puede participar
+    const validacion = await validarEmailPuedeParticipar(email);
+    
+    res.status(200).json({
+      success: true,
+      ...validacion,
+      diasEspera: DIAS_ESPERA_PARTICIPACION
+    });
+    
+  } catch (error) {
+    console.error('Error al validar email:', error);
+    res.status(500).json({ 
+      success: false,
       error: 'Error interno del servidor' 
     });
   }
@@ -192,7 +275,7 @@ app.post('/api/test-email', async (req, res) => {
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Email de prueba</h2>
           <p>Este es un email de prueba del sistema de premios de Glampling.</p>
-          <p>Fecha: ${new Date().toLocaleString('es-ES')}</p>
+          <p>Fecha: ${new Date().toLocaleString('es-CO')}</p>
           <p>Si recibes este email, la configuración está funcionando correctamente.</p>
         </div>
       `
@@ -378,9 +461,12 @@ app.listen(PORT, () => {
   console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
   console.log(`📊 Ver premios: http://localhost:${PORT}/api/premios`);
   console.log(`📈 Estadísticas: http://localhost:${PORT}/api/estadisticas`);
+  console.log(`✅ Validar email: POST http://localhost:${PORT}/api/validar-email`);
+  console.log(`🎁 Registrar premio: POST http://localhost:${PORT}/api/registrar-premio`);
   console.log(`🧪 Probar email: POST http://localhost:${PORT}/api/test-email`);
   console.log(`🔍 Diagnosticar Email: POST http://localhost:${PORT}/api/diagnosticar-email`);
   console.log(`🔄 Reintentar emails: POST http://localhost:${PORT}/api/reintentar-emails`);
   console.log(`📧 Configuración de email: ${process.env.EMAIL_USER}`);
+  console.log(`⏱️  Días de espera entre participaciones: ${DIAS_ESPERA_PARTICIPACION}`);
   console.log(`⚡ Los emails se envían en segundo plano (no bloquean la respuesta)`);
 });
